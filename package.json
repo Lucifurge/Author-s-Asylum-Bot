@@ -1,6 +1,6 @@
 {
   "name": "Author-Asylum-bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,6 +11,7 @@
     "express": "^4.18.2",
     "axios": "^1.6.0",
     "nspell": "^2.0.0",
-    "dictionary-en-us": "^1.0.0"
+    "dictionary-en-us": "^1.0.0",
+    "openai": "^4.8.0"
   }
 }
