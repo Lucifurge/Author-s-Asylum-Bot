@@ -78,73 +78,111 @@ const randomPrompt = genre => {
 };
 
 /* =========================
+   PROOFREAD UTILITIES
+========================= */
+const commonMistakes = {
+  teh: "the",
+  adn: "and",
+  recieve: "receive",
+  seperate: "separate",
+  definately: "definitely",
+  wich: "which"
+};
+
+function proofreadText(text) {
+  const issues = [];
+  let fixedText = text;
+
+  for (const [wrong, correct] of Object.entries(commonMistakes)) {
+    const regex = new RegExp(`\\b${wrong}\\b`, "gi");
+    if (regex.test(fixedText)) {
+      issues.push(`Spelling: "${wrong}" → "${correct}"`);
+      fixedText = fixedText.replace(regex, correct);
+    }
+  }
+
+  if (/\b(\w+)\s+\1\b/i.test(text)) {
+    issues.push("Repeated word detected");
+  }
+
+  text.split(/[.!?]/).forEach(s => {
+    if (s.trim().split(" ").length > 30) {
+      issues.push("Long sentence detected (30+ words)");
+    }
+  });
+
+  if (/\b(was|were|is|are|been|being)\s+\w+ed\b/i.test(text)) {
+    issues.push("Possible passive voice usage");
+  }
+
+  fixedText = fixedText.replace(/\s+([,.!?])/g, "$1");
+
+  return {
+    fixedText,
+    issues: issues.length ? issues : ["No major issues found"]
+  };
+}
+
+/* =========================
    SLASH COMMANDS
 ========================= */
 const commands = [
   new SlashCommandBuilder().setName("ping").setDescription("Bot status"),
-
   new SlashCommandBuilder().setName("help").setDescription("Show commands"),
-
-  new SlashCommandBuilder()
-    .setName("profile")
-    .setDescription("View your writer profile"),
+  new SlashCommandBuilder().setName("profile").setDescription("View your writer profile"),
 
   new SlashCommandBuilder()
     .setName("prompt")
     .setDescription("Get a writing prompt")
     .addStringOption(o =>
-      o.setName("genre")
-        .setDescription("dark, fantasy, romance, scifi")
+      o.setName("genre").setDescription("dark, fantasy, romance, scifi")
     ),
 
   new SlashCommandBuilder()
     .setName("write")
     .setDescription("Log a writing session")
     .addIntegerOption(o =>
-      o.setName("words")
-        .setDescription("Words written")
-        .setRequired(true)
+      o.setName("words").setDescription("Words written").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("outline")
     .setDescription("Create a story outline")
     .addStringOption(o =>
-      o.setName("idea")
-        .setDescription("Story idea")
-        .setRequired(true)
+      o.setName("idea").setDescription("Story idea").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("rewrite")
     .setDescription("Rewrite text cleaner")
     .addStringOption(o =>
-      o.setName("text")
-        .setDescription("Text")
-        .setRequired(true)
+      o.setName("text").setDescription("Text").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("improve")
     .setDescription("Improve flow and clarity")
     .addStringOption(o =>
-      o.setName("text")
-        .setDescription("Text")
-        .setRequired(true)
+      o.setName("text").setDescription("Text").setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName("wordcount")
     .setDescription("Count words")
     .addStringOption(o =>
-      o.setName("text")
-        .setDescription("Text")
-        .setRequired(true)
+      o.setName("text").setDescription("Text").setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("proofread")
+    .setDescription("Proofread text (offline)")
+    .addStringOption(o =>
+      o.setName("text").setDescription("Text to proofread").setRequired(true)
     )
 ].map(c => c.toJSON());
 
 /* =========================
-   REGISTER
+   REGISTER COMMANDS
 ========================= */
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 (async () => {
@@ -152,10 +190,11 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
     Routes.applicationCommands(process.env.CLIENT_ID),
     { body: commands }
   );
+  console.log("✅ Commands registered");
 })();
 
 /* =========================
-   HANDLER
+   COMMAND HANDLER
 ========================= */
 client.on("interactionCreate", async i => {
   if (!i.isCommand()) return;
@@ -179,6 +218,7 @@ client.on("interactionCreate", async i => {
               "/outline – story outline\n" +
               "/rewrite – rewrite text\n" +
               "/improve – improve flow\n" +
+              "/proofread – offline proofreading\n" +
               "/wordcount – count words"
             )
             .setColor("#111111")
@@ -187,22 +227,19 @@ client.on("interactionCreate", async i => {
     }
 
     if (i.commandName === "prompt") {
-      const genre = i.options.getString("genre");
-      return i.reply(`🩸 **Prompt:**\n${randomPrompt(genre)}`);
+      return i.reply(`🩸 **Prompt:**\n${randomPrompt(i.options.getString("genre"))}`);
     }
 
     if (i.commandName === "write") {
       const words = i.options.getInteger("words");
       const today = new Date().toDateString();
 
-      if (writers[userId].lastWrite !== today)
-        writers[userId].streak += 1;
-
+      if (writers[userId].lastWrite !== today) writers[userId].streak++;
       writers[userId].words += words;
       writers[userId].lastWrite = today;
       saveData(writers);
 
-      return i.reply(`✍️ Logged **${words} words**. Streak: ${writers[userId].streak}`);
+      return i.reply(`✍️ Logged **${words} words** | Streak: ${writers[userId].streak}`);
     }
 
     if (i.commandName === "profile") {
@@ -221,9 +258,8 @@ client.on("interactionCreate", async i => {
     }
 
     if (i.commandName === "outline") {
-      const idea = i.options.getString("idea");
       return i.reply(
-        `📚 **Outline**\nBeginning: ${idea}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`
+        `📚 **Outline**\nBeginning: ${i.options.getString("idea")}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`
       );
     }
 
@@ -239,9 +275,22 @@ client.on("interactionCreate", async i => {
 
     if (i.commandName === "wordcount") {
       const t = i.options.getString("text");
-      return i.reply(
-        `📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`
-      );
+      return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`);
+    }
+
+    if (i.commandName === "proofread") {
+      const result = proofreadText(i.options.getString("text"));
+      return i.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle("📝 Proofreading Report")
+            .addFields(
+              { name: "Issues", value: result.issues.join("\n") },
+              { name: "Suggested Fix", value: result.fixedText.slice(0, 1024) }
+            )
+            .setColor("#444444")
+        ]
+      });
     }
   } catch (e) {
     console.error(e);
@@ -252,8 +301,8 @@ client.on("interactionCreate", async i => {
 /* =========================
    READY
 ========================= */
-client.once("ready", () => {
-  console.log(`🖤 Logged in as ${client.user.tag}`);
-});
+client.once("ready", () =>
+  console.log(`🖤 Logged in as ${client.user.tag}`)
+);
 
 client.login(process.env.TOKEN);
