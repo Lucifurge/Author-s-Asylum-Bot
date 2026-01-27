@@ -116,14 +116,18 @@ function aiImprove(text) { return aiRewrite(text).replace(/(.{60,}?)(,|\s)/g, "$
 /* =========================
    AUTO MEME + DAILY VERSE
 ========================= */
-async function sendMeme() {
-  if (!botConfig.memeChannel) return;
-  const channel = client.channels.cache.get(botConfig.memeChannel);
-  if (!channel) return;
+async function sendMeme(channelId) {
   try {
     const res = await axios.get("https://meme-api.com/gimme");
-    if (res.data && res.data.url) channel.send({ content: res.data.url });
-  } catch (e) { console.error("Error fetching meme:", e); }
+    if (res.data && res.data.url) {
+      const channel = client.channels.cache.get(channelId);
+      if (channel) await channel.send({ content: res.data.url });
+      return res.data.url;
+    }
+  } catch (e) {
+    console.error("Error fetching meme:", e);
+    return null;
+  }
 }
 
 async function sendDailyVerse() {
@@ -139,9 +143,10 @@ async function sendDailyVerse() {
 /* Start intervals */
 client.once("ready", () => {
   console.log(`🖤 Logged in as ${client.user.tag}`);
-  setInterval(sendMeme, 15 * 60 * 1000);
-  sendDailyVerse();
-  setInterval(sendDailyVerse, 24 * 60 * 60 * 1000);
+  if (botConfig.memeChannel) sendMeme(botConfig.memeChannel);
+  setInterval(() => { if (botConfig.memeChannel) sendMeme(botConfig.memeChannel); }, 15 * 60 * 1000);
+  if (botConfig.dailyVerseChannel) sendDailyVerse();
+  setInterval(() => { if (botConfig.dailyVerseChannel) sendDailyVerse(); }, 24 * 60 * 60 * 1000);
 });
 
 /* =========================
@@ -159,14 +164,18 @@ const commands = [
   new SlashCommandBuilder().setName("wordcount").setDescription("Count words").addStringOption(o => o.setName("text").setDescription("Text to count").setRequired(true)),
   new SlashCommandBuilder().setName("proofread").setDescription("AI-style proofreading").addStringOption(o => o.setName("text").setDescription("Text to proofread").setRequired(true)),
   new SlashCommandBuilder().setName("setmeme").setDescription("Set meme channel").addChannelOption(o => o.setName("channel").setDescription("Channel for memes").setRequired(true)),
-  new SlashCommandBuilder().setName("setverse").setDescription("Set daily verse channel").addChannelOption(o => o.setName("channel").setDescription("Channel for daily verse").setRequired(true))
+  new SlashCommandBuilder().setName("setverse").setDescription("Set daily verse channel").addChannelOption(o => o.setName("channel").setDescription("Channel for daily verse").setRequired(true)),
+  new SlashCommandBuilder().setName("meme").setDescription("Generate a meme instantly")
 ].map(c => c.toJSON());
 
 /* =========================
    REGISTER COMMANDS
 ========================= */
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-(async () => { await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }); console.log("✅ Commands registered"); })();
+(async () => {
+  await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+  console.log("✅ Commands registered");
+})();
 
 /* =========================
    COMMAND HANDLER
@@ -179,7 +188,7 @@ client.on("interactionCreate", async i => {
   try {
     switch (i.commandName) {
       case "ping": return i.reply("🖋️ Author’s Asylum is awake.");
-      case "help": return i.reply({ embeds: [new EmbedBuilder().setTitle("🖤 Commands").setDescription("/prompt, /write, /profile, /outline, /rewrite, /improve, /proofread, /wordcount, /setmeme, /setverse").setColor("#111111")] });
+      case "help": return i.reply({ embeds: [new EmbedBuilder().setTitle("🖤 Commands").setDescription("/prompt, /write, /profile, /outline, /rewrite, /improve, /proofread, /wordcount, /setmeme, /setverse, /meme").setColor("#111111")] });
       case "prompt": return i.reply(`🩸 **Prompt:**\n${randomPrompt(i.options.getString("genre"))}`);
       case "write": {
         const words = i.options.getInteger("words"); const today = new Date().toDateString();
@@ -187,7 +196,10 @@ client.on("interactionCreate", async i => {
         writers[userId].words += words; writers[userId].lastWrite = today; saveData(writers);
         return i.reply(`✍️ Logged **${words} words** | Streak: ${writers[userId].streak}`);
       }
-      case "profile": { const w = writers[userId]; return i.reply({ embeds: [new EmbedBuilder().setTitle(`🖋️ ${i.user.username}'s Profile`).addFields({ name: "Total Words", value: `${w.words}`, inline: true }, { name: "Streak", value: `${w.streak} days`, inline: true }).setColor("#222222")] }); }
+      case "profile": {
+        const w = writers[userId];
+        return i.reply({ embeds: [new EmbedBuilder().setTitle(`🖋️ ${i.user.username}'s Profile`).addFields({ name: "Total Words", value: `${w.words}`, inline: true }, { name: "Streak", value: `${w.streak} days`, inline: true }).setColor("#222222")] });
+      }
       case "outline": return i.reply(`📚 **Outline**\nBeginning: ${i.options.getString("idea")}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`);
       case "rewrite": {
         const text = i.options.getString("text");
@@ -199,17 +211,38 @@ client.on("interactionCreate", async i => {
         const ai = await callOpenAI(`Improve the flow and clarity of this text:\n${text}`);
         return i.reply("✨ " + (ai || aiImprove(text)));
       }
-      case "wordcount": { const t = i.options.getString("text"); return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`); }
+      case "wordcount": {
+        const t = i.options.getString("text");
+        return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`);
+      }
       case "proofread": {
         const text = i.options.getString("text");
         const ai = await callOpenAI(`Proofread this text and suggest corrections:\n${text}`);
         const offline = aiProofread(text);
         return i.reply({ embeds: [new EmbedBuilder().setTitle("📝 Proofreading Report").addFields({ name: "Issues", value: (ai || offline.issues.join("\n")).slice(0,1024) }, { name: "Suggested Fix", value: (ai || offline.fixedText).slice(0,1024) }).setColor("#444444")] });
       }
-      case "setmeme": { botConfig.memeChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Meme channel set!"); }
-      case "setverse": { botConfig.dailyVerseChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Daily verse channel set!"); }
+      case "setmeme": {
+        botConfig.memeChannel = i.options.getChannel("channel").id;
+        saveConfig(botConfig);
+        sendMeme(botConfig.memeChannel); // send immediately
+        return i.reply("✅ Meme channel set and meme sent!");
+      }
+      case "setverse": {
+        botConfig.dailyVerseChannel = i.options.getChannel("channel").id;
+        saveConfig(botConfig);
+        sendDailyVerse(); // send immediately
+        return i.reply("✅ Daily verse channel set and verse sent!");
+      }
+      case "meme": {
+        if (!botConfig.memeChannel) return i.reply("⚠️ Meme channel is not set. Use /setmeme first.");
+        const url = await sendMeme(botConfig.memeChannel);
+        return i.reply(url ? "😂 Meme sent!" : "⚠️ Failed to fetch a meme.");
+      }
     }
-  } catch (e) { console.error(e); i.reply("⚠️ The asylum shook, but it stands."); }
+  } catch (e) {
+    console.error(e);
+    i.reply("⚠️ The asylum shook, but it stands.");
+  }
 });
 
 client.login(process.env.TOKEN);
