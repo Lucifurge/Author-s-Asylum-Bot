@@ -1,15 +1,11 @@
 require("dotenv").config();
-const {
-  Client,
-  GatewayIntentBits,
-  REST,
-  Routes,
-  SlashCommandBuilder,
-  EmbedBuilder
-} = require("discord.js");
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } = require("discord.js");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const nspell = require("nspell");
+const dictionary = require("dictionary-en-us");
+const axios = require("axios");
 
 /* =========================
    SAFETY
@@ -20,20 +16,14 @@ process.on("uncaughtException", console.error);
 /* =========================
    CLIENT
 ========================= */
-const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
-});
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
 
 /* =========================
    EXPRESS STATUS
 ========================= */
 const app = express();
 app.get("/api/status", (_, res) => {
-  res.json({
-    online: client.isReady(),
-    servers: client.guilds.cache.size,
-    uptime: Math.floor(process.uptime())
-  });
+  res.json({ online: client.isReady(), servers: client.guilds.cache.size, uptime: Math.floor(process.uptime()) });
 });
 app.listen(process.env.PORT || 3000);
 
@@ -41,87 +31,85 @@ app.listen(process.env.PORT || 3000);
    DATA STORAGE
 ========================= */
 const dataPath = path.join(__dirname, "writers.json");
-const loadData = () =>
-  fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath)) : {};
-const saveData = d =>
-  fs.writeFileSync(dataPath, JSON.stringify(d, null, 2));
+const configPath = path.join(__dirname, "config.json");
+
+const loadData = () => fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath)) : {};
+const saveData = d => fs.writeFileSync(dataPath, JSON.stringify(d, null, 2));
+
+const loadConfig = () => fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath)) : {};
+const saveConfig = d => fs.writeFileSync(configPath, JSON.stringify(d, null, 2));
 
 let writers = loadData();
+let botConfig = loadConfig();
 
 /* =========================
    PROMPTS
 ========================= */
 const prompts = {
-  dark: [
-    "You write letters to someone who died.",
-    "The asylum was never abandoned.",
-    "A voice narrates your thoughts at night."
-  ],
-  fantasy: [
-    "Magic disappears overnight.",
-    "A god wakes up powerless.",
-    "A kingdom ruled by lies."
-  ],
-  romance: [
-    "Two people meet only in dreams.",
-    "Love letters arrive years too late."
-  ],
-  sciFi: [
-    "Earth receives a final warning.",
-    "Memories are now illegal."
-  ]
+  dark: ["You write letters to someone who died.", "The asylum was never abandoned.", "A voice narrates your thoughts at night."],
+  fantasy: ["Magic disappears overnight.", "A god wakes up powerless.", "A kingdom ruled by lies."],
+  romance: ["Two people meet only in dreams.", "Love letters arrive years too late."],
+  sciFi: ["Earth receives a final warning.", "Memories are now illegal."]
 };
-
-const randomPrompt = genre => {
-  const pool = prompts[genre] || Object.values(prompts).flat();
-  return pool[Math.floor(Math.random() * pool.length)];
-};
+const randomPrompt = genre => { const pool = prompts[genre] || Object.values(prompts).flat(); return pool[Math.floor(Math.random() * pool.length)]; };
 
 /* =========================
-   PROOFREAD UTILITIES
+   OFFLINE PROOFREAD / REWRITE / IMPROVE
 ========================= */
-const commonMistakes = {
-  teh: "the",
-  adn: "and",
-  recieve: "receive",
-  seperate: "separate",
-  definately: "definitely",
-  wich: "which"
-};
+let spell;
+dictionary((err, dict) => { if (err) throw err; spell = nspell(dict); });
 
-function proofreadText(text) {
+function suggestWord(word) { if (spell.correct(word)) return word; const suggestions = spell.suggest(word); return suggestions.length ? suggestions[0] : word; }
+
+function aiProofread(text) {
   const issues = [];
-  let fixedText = text;
-
-  for (const [wrong, correct] of Object.entries(commonMistakes)) {
-    const regex = new RegExp(`\\b${wrong}\\b`, "gi");
-    if (regex.test(fixedText)) {
-      issues.push(`Spelling: "${wrong}" → "${correct}"`);
-      fixedText = fixedText.replace(regex, correct);
-    }
-  }
-
-  if (/\b(\w+)\s+\1\b/i.test(text)) {
-    issues.push("Repeated word detected");
-  }
-
-  text.split(/[.!?]/).forEach(s => {
-    if (s.trim().split(" ").length > 30) {
-      issues.push("Long sentence detected (30+ words)");
-    }
+  let fixedText = text.replace(/\b\w+\b/g, word => {
+    const corrected = suggestWord(word);
+    if (corrected !== word) issues.push(`Spelling: "${word}" → "${corrected}"`);
+    return corrected;
   });
-
-  if (/\b(was|were|is|are|been|being)\s+\w+ed\b/i.test(text)) {
-    issues.push("Possible passive voice usage");
-  }
-
-  fixedText = fixedText.replace(/\s+([,.!?])/g, "$1");
-
-  return {
-    fixedText,
-    issues: issues.length ? issues : ["No major issues found"]
-  };
+  fixedText = fixedText.replace(/\b(\w+)\s+\1\b/gi, (m, p1) => { issues.push(`Removed repeated word: "${p1}"`); return p1; });
+  fixedText = fixedText.replace(/(^|[.!?]\s+)([a-z])/g, (_, p1, p2) => p1 + p2.toUpperCase());
+  fixedText = fixedText.replace(/\s+([,.!?])/g, "$1").replace(/\s+/g, " ");
+  text.split(/[.!?]/).forEach(s => { if (s.trim().split(" ").length > 30) issues.push("Long sentence detected (30+ words)"); });
+  if (/\b(was|were|is|are|been|being)\s+\w+ed\b/i.test(text)) issues.push("Possible passive voice usage");
+  return { fixedText: fixedText.trim(), issues: issues.length ? issues : ["No major issues found"] };
 }
+
+function aiRewrite(text) { return text.split(/[.!?]/).map(s => s.trim().replace(/\b(\w+)\s+\1\b/gi, "$1").replace(/\b\w+\b/g, word => suggestWord(word)).replace(/^./, c => c.toUpperCase())).join(" "); }
+
+function aiImprove(text) { return aiRewrite(text).replace(/(.{60,}?)(,|\s)/g, "$1.$2"); }
+
+/* =========================
+   AUTO MEME + DAILY VERSE
+========================= */
+async function sendMeme() {
+  if (!botConfig.memeChannel) return;
+  const channel = client.channels.cache.get(botConfig.memeChannel);
+  if (!channel) return;
+  try {
+    const res = await axios.get("https://meme-api.com/gimme"); // public meme API
+    if (res.data && res.data.url) channel.send({ content: res.data.url });
+  } catch (e) { console.error("Error fetching meme:", e); }
+}
+
+async function sendDailyVerse() {
+  if (!botConfig.dailyVerseChannel) return;
+  const channel = client.channels.cache.get(botConfig.dailyVerseChannel);
+  if (!channel) return;
+  try {
+    const res = await axios.get("https://bible-api.com/john 3:16"); // example verse API
+    if (res.data && res.data.text) channel.send({ content: `📖 ${res.data.reference} - ${res.data.text}` });
+  } catch (e) { console.error("Error fetching verse:", e); }
+}
+
+/* Start intervals */
+client.once("ready", () => {
+  console.log(`🖤 Logged in as ${client.user.tag}`);
+  setInterval(sendMeme, 15 * 60 * 1000); // every 15 min
+  sendDailyVerse(); // run immediately on start
+  setInterval(sendDailyVerse, 24 * 60 * 60 * 1000); // every 24h
+});
 
 /* =========================
    SLASH COMMANDS
@@ -130,179 +118,52 @@ const commands = [
   new SlashCommandBuilder().setName("ping").setDescription("Bot status"),
   new SlashCommandBuilder().setName("help").setDescription("Show commands"),
   new SlashCommandBuilder().setName("profile").setDescription("View your writer profile"),
-
-  new SlashCommandBuilder()
-    .setName("prompt")
-    .setDescription("Get a writing prompt")
-    .addStringOption(o =>
-      o.setName("genre").setDescription("dark, fantasy, romance, scifi")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("write")
-    .setDescription("Log a writing session")
-    .addIntegerOption(o =>
-      o.setName("words").setDescription("Words written").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("outline")
-    .setDescription("Create a story outline")
-    .addStringOption(o =>
-      o.setName("idea").setDescription("Story idea").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("rewrite")
-    .setDescription("Rewrite text cleaner")
-    .addStringOption(o =>
-      o.setName("text").setDescription("Text").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("improve")
-    .setDescription("Improve flow and clarity")
-    .addStringOption(o =>
-      o.setName("text").setDescription("Text").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("wordcount")
-    .setDescription("Count words")
-    .addStringOption(o =>
-      o.setName("text").setDescription("Text").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("proofread")
-    .setDescription("Proofread text (offline)")
-    .addStringOption(o =>
-      o.setName("text").setDescription("Text to proofread").setRequired(true)
-    )
+  new SlashCommandBuilder().setName("prompt").setDescription("Get a writing prompt").addStringOption(o => o.setName("genre").setDescription("dark, fantasy, romance, scifi")),
+  new SlashCommandBuilder().setName("write").setDescription("Log a writing session").addIntegerOption(o => o.setName("words").setDescription("Words written").setRequired(true)),
+  new SlashCommandBuilder().setName("outline").setDescription("Create a story outline").addStringOption(o => o.setName("idea").setDescription("Story idea").setRequired(true)),
+  new SlashCommandBuilder().setName("rewrite").setDescription("Rewrite text smarter").addStringOption(o => o.setName("text").setDescription("Text to rewrite").setRequired(true)),
+  new SlashCommandBuilder().setName("improve").setDescription("Improve flow and clarity").addStringOption(o => o.setName("text").setDescription("Text to improve").setRequired(true)),
+  new SlashCommandBuilder().setName("wordcount").setDescription("Count words").addStringOption(o => o.setName("text").setDescription("Text to count").setRequired(true)),
+  new SlashCommandBuilder().setName("proofread").setDescription("AI-style proofreading").addStringOption(o => o.setName("text").setDescription("Text to proofread").setRequired(true)),
+  new SlashCommandBuilder().setName("setmeme").setDescription("Set meme channel").addChannelOption(o => o.setName("channel").setDescription("Channel for memes").setRequired(true)),
+  new SlashCommandBuilder().setName("setverse").setDescription("Set daily verse channel").addChannelOption(o => o.setName("channel").setDescription("Channel for daily verse").setRequired(true))
 ].map(c => c.toJSON());
 
 /* =========================
    REGISTER COMMANDS
 ========================= */
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-(async () => {
-  await rest.put(
-    Routes.applicationCommands(process.env.CLIENT_ID),
-    { body: commands }
-  );
-  console.log("✅ Commands registered");
-})();
+(async () => { await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands }); console.log("✅ Commands registered"); })();
 
 /* =========================
    COMMAND HANDLER
 ========================= */
 client.on("interactionCreate", async i => {
   if (!i.isCommand()) return;
-
   const userId = i.user.id;
   writers[userId] ??= { words: 0, streak: 0, lastWrite: null };
 
   try {
-    if (i.commandName === "ping")
-      return i.reply("🖋️ Author’s Asylum is awake.");
-
-    if (i.commandName === "help") {
-      return i.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("🖤 Author’s Asylum Commands")
-            .setDescription(
-              "/prompt – writing idea\n" +
-              "/write – log writing\n" +
-              "/profile – writer stats\n" +
-              "/outline – story outline\n" +
-              "/rewrite – rewrite text\n" +
-              "/improve – improve flow\n" +
-              "/proofread – offline proofreading\n" +
-              "/wordcount – count words"
-            )
-            .setColor("#111111")
-        ]
-      });
+    switch (i.commandName) {
+      case "ping": return i.reply("🖋️ Author’s Asylum is awake.");
+      case "help": return i.reply({ embeds: [new EmbedBuilder().setTitle("🖤 Commands").setDescription("/prompt, /write, /profile, /outline, /rewrite, /improve, /proofread, /wordcount, /setmeme, /setverse").setColor("#111111")] });
+      case "prompt": return i.reply(`🩸 **Prompt:**\n${randomPrompt(i.options.getString("genre"))}`);
+      case "write": {
+        const words = i.options.getInteger("words"); const today = new Date().toDateString();
+        if (writers[userId].lastWrite !== today) writers[userId].streak++;
+        writers[userId].words += words; writers[userId].lastWrite = today; saveData(writers);
+        return i.reply(`✍️ Logged **${words} words** | Streak: ${writers[userId].streak}`);
+      }
+      case "profile": { const w = writers[userId]; return i.reply({ embeds: [new EmbedBuilder().setTitle(`🖋️ ${i.user.username}'s Profile`).addFields({ name: "Total Words", value: `${w.words}`, inline: true }, { name: "Streak", value: `${w.streak} days`, inline: true }).setColor("#222222")] }); }
+      case "outline": return i.reply(`📚 **Outline**\nBeginning: ${i.options.getString("idea")}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`);
+      case "rewrite": return i.reply("✏️ " + aiRewrite(i.options.getString("text")));
+      case "improve": return i.reply("✨ " + aiImprove(i.options.getString("text")));
+      case "wordcount": { const t = i.options.getString("text"); return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`); }
+      case "proofread": { const result = aiProofread(i.options.getString("text")); return i.reply({ embeds: [new EmbedBuilder().setTitle("📝 Proofreading Report").addFields({ name: "Issues", value: result.issues.join("\n") }, { name: "Suggested Fix", value: result.fixedText.slice(0, 1024) }).setColor("#444444")] }); }
+      case "setmeme": { botConfig.memeChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Meme channel set!"); }
+      case "setverse": { botConfig.dailyVerseChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Daily verse channel set!"); }
     }
-
-    if (i.commandName === "prompt") {
-      return i.reply(`🩸 **Prompt:**\n${randomPrompt(i.options.getString("genre"))}`);
-    }
-
-    if (i.commandName === "write") {
-      const words = i.options.getInteger("words");
-      const today = new Date().toDateString();
-
-      if (writers[userId].lastWrite !== today) writers[userId].streak++;
-      writers[userId].words += words;
-      writers[userId].lastWrite = today;
-      saveData(writers);
-
-      return i.reply(`✍️ Logged **${words} words** | Streak: ${writers[userId].streak}`);
-    }
-
-    if (i.commandName === "profile") {
-      const w = writers[userId];
-      return i.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle(`🖋️ ${i.user.username}'s Profile`)
-            .addFields(
-              { name: "Total Words", value: `${w.words}`, inline: true },
-              { name: "Streak", value: `${w.streak} days`, inline: true }
-            )
-            .setColor("#222222")
-        ]
-      });
-    }
-
-    if (i.commandName === "outline") {
-      return i.reply(
-        `📚 **Outline**\nBeginning: ${i.options.getString("idea")}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`
-      );
-    }
-
-    if (i.commandName === "rewrite") {
-      const t = i.options.getString("text");
-      return i.reply("✏️ " + t.charAt(0).toUpperCase() + t.slice(1));
-    }
-
-    if (i.commandName === "improve") {
-      const t = i.options.getString("text");
-      return i.reply("✨ " + t.replace(/\s+/g, " ").trim());
-    }
-
-    if (i.commandName === "wordcount") {
-      const t = i.options.getString("text");
-      return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`);
-    }
-
-    if (i.commandName === "proofread") {
-      const result = proofreadText(i.options.getString("text"));
-      return i.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle("📝 Proofreading Report")
-            .addFields(
-              { name: "Issues", value: result.issues.join("\n") },
-              { name: "Suggested Fix", value: result.fixedText.slice(0, 1024) }
-            )
-            .setColor("#444444")
-        ]
-      });
-    }
-  } catch (e) {
-    console.error(e);
-    i.reply("⚠️ The asylum shook, but it stands.");
-  }
+  } catch (e) { console.error(e); i.reply("⚠️ The asylum shook, but it stands."); }
 });
-
-/* =========================
-   READY
-========================= */
-client.once("ready", () =>
-  console.log(`🖤 Logged in as ${client.user.tag}`)
-);
 
 client.login(process.env.TOKEN);
