@@ -6,6 +6,7 @@ const path = require("path");
 const nspell = require("nspell");
 const dictionary = require("dictionary-en-us");
 const axios = require("axios");
+const OpenAI = require("openai");
 
 /* =========================
    SAFETY
@@ -23,7 +24,11 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 ========================= */
 const app = express();
 app.get("/api/status", (_, res) => {
-  res.json({ online: client.isReady(), servers: client.guilds.cache.size, uptime: Math.floor(process.uptime()) });
+  res.json({
+    online: client.isReady(),
+    servers: client.guilds.cache.size,
+    uptime: Math.floor(process.uptime())
+  });
 });
 app.listen(process.env.PORT || 3000);
 
@@ -43,6 +48,28 @@ let writers = loadData();
 let botConfig = loadConfig();
 
 /* =========================
+   OPENAI SETUP
+========================= */
+const openai = process.env.OPENAI_KEY ? new OpenAI({ apiKey: process.env.OPENAI_KEY }) : null;
+
+async function callOpenAI(prompt) {
+  if (!openai) return null;
+  try {
+    const res = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: "You are a smart writing assistant that corrects grammar, improves style, and rewrites text clearly." },
+        { role: "user", content: prompt }
+      ]
+    });
+    return res.choices[0].message.content.trim();
+  } catch (e) {
+    console.error("OpenAI API error:", e);
+    return null;
+  }
+}
+
+/* =========================
    PROMPTS
 ========================= */
 const prompts = {
@@ -51,7 +78,10 @@ const prompts = {
   romance: ["Two people meet only in dreams.", "Love letters arrive years too late."],
   sciFi: ["Earth receives a final warning.", "Memories are now illegal."]
 };
-const randomPrompt = genre => { const pool = prompts[genre] || Object.values(prompts).flat(); return pool[Math.floor(Math.random() * pool.length)]; };
+const randomPrompt = genre => {
+  const pool = prompts[genre] || Object.values(prompts).flat();
+  return pool[Math.floor(Math.random() * pool.length)];
+};
 
 /* =========================
    OFFLINE PROOFREAD / REWRITE / IMPROVE
@@ -59,7 +89,11 @@ const randomPrompt = genre => { const pool = prompts[genre] || Object.values(pro
 let spell;
 dictionary((err, dict) => { if (err) throw err; spell = nspell(dict); });
 
-function suggestWord(word) { if (spell.correct(word)) return word; const suggestions = spell.suggest(word); return suggestions.length ? suggestions[0] : word; }
+function suggestWord(word) {
+  if (spell.correct(word)) return word;
+  const suggestions = spell.suggest(word);
+  return suggestions.length ? suggestions[0] : word;
+}
 
 function aiProofread(text) {
   const issues = [];
@@ -77,7 +111,6 @@ function aiProofread(text) {
 }
 
 function aiRewrite(text) { return text.split(/[.!?]/).map(s => s.trim().replace(/\b(\w+)\s+\1\b/gi, "$1").replace(/\b\w+\b/g, word => suggestWord(word)).replace(/^./, c => c.toUpperCase())).join(" "); }
-
 function aiImprove(text) { return aiRewrite(text).replace(/(.{60,}?)(,|\s)/g, "$1.$2"); }
 
 /* =========================
@@ -88,7 +121,7 @@ async function sendMeme() {
   const channel = client.channels.cache.get(botConfig.memeChannel);
   if (!channel) return;
   try {
-    const res = await axios.get("https://meme-api.com/gimme"); // public meme API
+    const res = await axios.get("https://meme-api.com/gimme");
     if (res.data && res.data.url) channel.send({ content: res.data.url });
   } catch (e) { console.error("Error fetching meme:", e); }
 }
@@ -98,7 +131,7 @@ async function sendDailyVerse() {
   const channel = client.channels.cache.get(botConfig.dailyVerseChannel);
   if (!channel) return;
   try {
-    const res = await axios.get("https://bible-api.com/john 3:16"); // example verse API
+    const res = await axios.get("https://bible-api.com/john 3:16");
     if (res.data && res.data.text) channel.send({ content: `📖 ${res.data.reference} - ${res.data.text}` });
   } catch (e) { console.error("Error fetching verse:", e); }
 }
@@ -106,9 +139,9 @@ async function sendDailyVerse() {
 /* Start intervals */
 client.once("ready", () => {
   console.log(`🖤 Logged in as ${client.user.tag}`);
-  setInterval(sendMeme, 15 * 60 * 1000); // every 15 min
-  sendDailyVerse(); // run immediately on start
-  setInterval(sendDailyVerse, 24 * 60 * 60 * 1000); // every 24h
+  setInterval(sendMeme, 15 * 60 * 1000);
+  sendDailyVerse();
+  setInterval(sendDailyVerse, 24 * 60 * 60 * 1000);
 });
 
 /* =========================
@@ -156,10 +189,23 @@ client.on("interactionCreate", async i => {
       }
       case "profile": { const w = writers[userId]; return i.reply({ embeds: [new EmbedBuilder().setTitle(`🖋️ ${i.user.username}'s Profile`).addFields({ name: "Total Words", value: `${w.words}`, inline: true }, { name: "Streak", value: `${w.streak} days`, inline: true }).setColor("#222222")] }); }
       case "outline": return i.reply(`📚 **Outline**\nBeginning: ${i.options.getString("idea")}\nMiddle: Conflict\nClimax: Turning point\nEnding: Resolution`);
-      case "rewrite": return i.reply("✏️ " + aiRewrite(i.options.getString("text")));
-      case "improve": return i.reply("✨ " + aiImprove(i.options.getString("text")));
+      case "rewrite": {
+        const text = i.options.getString("text");
+        const ai = await callOpenAI(`Rewrite this text clearly and grammatically:\n${text}`);
+        return i.reply("✏️ " + (ai || aiRewrite(text)));
+      }
+      case "improve": {
+        const text = i.options.getString("text");
+        const ai = await callOpenAI(`Improve the flow and clarity of this text:\n${text}`);
+        return i.reply("✨ " + (ai || aiImprove(text)));
+      }
       case "wordcount": { const t = i.options.getString("text"); return i.reply(`📊 Words: ${t.trim().split(/\s+/).length} | Characters: ${t.length}`); }
-      case "proofread": { const result = aiProofread(i.options.getString("text")); return i.reply({ embeds: [new EmbedBuilder().setTitle("📝 Proofreading Report").addFields({ name: "Issues", value: result.issues.join("\n") }, { name: "Suggested Fix", value: result.fixedText.slice(0, 1024) }).setColor("#444444")] }); }
+      case "proofread": {
+        const text = i.options.getString("text");
+        const ai = await callOpenAI(`Proofread this text and suggest corrections:\n${text}`);
+        const offline = aiProofread(text);
+        return i.reply({ embeds: [new EmbedBuilder().setTitle("📝 Proofreading Report").addFields({ name: "Issues", value: (ai || offline.issues.join("\n")).slice(0,1024) }, { name: "Suggested Fix", value: (ai || offline.fixedText).slice(0,1024) }).setColor("#444444")] });
+      }
       case "setmeme": { botConfig.memeChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Meme channel set!"); }
       case "setverse": { botConfig.dailyVerseChannel = i.options.getChannel("channel").id; saveConfig(botConfig); return i.reply("✅ Daily verse channel set!"); }
     }
