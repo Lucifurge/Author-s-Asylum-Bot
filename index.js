@@ -4,12 +4,12 @@
 require("dotenv").config();
 
 if (!process.env.TOKEN || !process.env.CLIENT_ID) {
-  console.error("❌ Missing TOKEN or CLIENT_ID in environment variables");
+  console.error("❌ Missing TOKEN or CLIENT_ID");
   process.exit(1);
 }
 
-process.on("unhandledRejection", err => console.error("Unhandled Rejection:", err));
-process.on("uncaughtException", err => console.error("Uncaught Exception:", err));
+process.on("unhandledRejection", e => console.error(e));
+process.on("uncaughtException", e => console.error(e));
 
 /* =========================
    IMPORTS
@@ -19,11 +19,13 @@ const {
   GatewayIntentBits,
   REST,
   Routes,
-  SlashCommandBuilder,
-  EmbedBuilder
+  SlashCommandBuilder
 } = require("discord.js");
 
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
 
 /* =========================
    DISCORD CLIENT
@@ -33,29 +35,72 @@ const client = new Client({
 });
 
 /* =========================
-   EXPRESS (RENDER KEEP-ALIVE)
+   EXPRESS (RENDER KEEP ALIVE)
 ========================= */
 const app = express();
 
-app.get("/", (_, res) => {
-  res.send("Author’s Asylum Bot is online.");
-});
-
-app.get("/api/status", (_, res) => {
-  res.json({
-    online: client.isReady(),
-    uptime: Math.floor(process.uptime())
-  });
-});
-
-app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Web server running");
-});
+app.get("/", (_, res) => res.send("Author’s Asylum Bot is online"));
+app.listen(process.env.PORT || 3000, () =>
+  console.log("🌐 Web server running")
+);
 
 /* =========================
-   SLASH COMMAND DEFINITIONS
+   STORAGE
 ========================= */
-const commandData = [
+const configPath = path.join(__dirname, "config.json");
+
+function loadConfig() {
+  try {
+    return fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath))
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveConfig(data) {
+  fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
+}
+
+let botConfig = loadConfig();
+
+/* =========================
+   MEME FETCH (SAFE)
+========================= */
+const axiosSafe = axios.create({ timeout: 7000 });
+
+async function sendMeme(channelId) {
+  try {
+    const res = await axiosSafe.get("https://meme-api.com/gimme");
+    const channel = client.channels.cache.get(channelId);
+    if (channel && res.data?.url) {
+      await channel.send(res.data.url);
+    }
+  } catch (e) {
+    console.error("Meme error:", e.message);
+  }
+}
+
+/* =========================
+   PROMPTS
+========================= */
+const prompts = {
+  dark: ["The asylum was never abandoned."],
+  fantasy: ["Magic disappears overnight."],
+  romance: ["Love letters arrive years too late."],
+  scifi: ["Earth receives a final warning."]
+};
+
+const getPrompt = genre => {
+  const pool = prompts[genre] || Object.values(prompts).flat();
+  return pool[Math.floor(Math.random() * pool.length)];
+};
+
+/* =========================
+   SLASH COMMANDS (ALL FIXED)
+========================= */
+const commands = [
   new SlashCommandBuilder()
     .setName("ping")
     .setDescription("Check if the bot is alive"),
@@ -63,36 +108,28 @@ const commandData = [
   new SlashCommandBuilder()
     .setName("prompt")
     .setDescription("Get a writing prompt")
-    .addStringOption(opt =>
-      opt
-        .setName("genre")
+    .addStringOption(o =>
+      o.setName("genre")
         .setDescription("dark, fantasy, romance, scifi")
         .setRequired(false)
     ),
 
   new SlashCommandBuilder()
-    .setName("rewrite")
-    .setDescription("Rewrite text clearly")
-    .addStringOption(opt =>
-      opt
-        .setName("text")
-        .setDescription("Text you want rewritten")
+    .setName("setmeme")
+    .setDescription("Set the meme channel")
+    .addChannelOption(o =>
+      o.setName("channel")
+        .setDescription("Channel where memes will be sent")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName("proofread")
-    .setDescription("Proofread your text")
-    .addStringOption(opt =>
-      opt
-        .setName("text")
-        .setDescription("Text you want proofread")
-        .setRequired(true)
-    )
-];
+    .setName("meme")
+    .setDescription("Send a meme now")
+].map(c => c.toJSON());
 
 /* =========================
-   REGISTER COMMANDS (SAFE)
+   REGISTER COMMANDS
 ========================= */
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
@@ -100,43 +137,16 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
   try {
     await rest.put(
       Routes.applicationCommands(process.env.CLIENT_ID),
-      { body: commandData.map(c => c.toJSON()) }
+      { body: commands }
     );
     console.log("✅ Slash commands registered");
-  } catch (err) {
-    console.error("❌ Slash command registration failed:", err);
+  } catch (e) {
+    console.error("❌ Command registration failed:", e);
   }
 })();
 
 /* =========================
-   PROMPTS
-========================= */
-const prompts = {
-  dark: [
-    "A voice narrates your thoughts at night.",
-    "The asylum was never abandoned."
-  ],
-  fantasy: [
-    "Magic disappears overnight.",
-    "A god wakes up powerless."
-  ],
-  romance: [
-    "Two people meet only in dreams.",
-    "Love letters arrive years too late."
-  ],
-  scifi: [
-    "Memories are illegal.",
-    "Earth receives a final warning."
-  ]
-};
-
-function getPrompt(genre) {
-  const pool = prompts[genre] || Object.values(prompts).flat();
-  return pool[Math.floor(Math.random() * pool.length)];
-}
-
-/* =========================
-   BOT READY
+   READY
 ========================= */
 client.once("ready", () => {
   console.log(`🖤 Logged in as ${client.user.tag}`);
@@ -145,36 +155,38 @@ client.once("ready", () => {
 /* =========================
    INTERACTIONS
 ========================= */
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+client.on("interactionCreate", async i => {
+  if (!i.isChatInputCommand()) return;
 
   try {
-    switch (interaction.commandName) {
+    switch (i.commandName) {
       case "ping":
-        return interaction.reply("🖋️ Author’s Asylum is awake.");
+        return i.reply("🖋️ Author’s Asylum is awake.");
 
-      case "prompt": {
-        const genre = interaction.options.getString("genre");
-        return interaction.reply(`🩸 **Prompt:** ${getPrompt(genre)}`);
+      case "prompt":
+        return i.reply(`🩸 **Prompt:** ${getPrompt(i.options.getString("genre"))}`);
+
+      case "setmeme": {
+        const ch = i.options.getChannel("channel");
+        botConfig.memeChannel = ch.id;
+        saveConfig(botConfig);
+        await sendMeme(ch.id);
+        return i.reply("✅ Meme channel set and meme sent!");
       }
 
-      case "rewrite": {
-        const text = interaction.options.getString("text");
-        return interaction.reply(`✏️ ${text}`);
-      }
-
-      case "proofread": {
-        const text = interaction.options.getString("text");
-        return interaction.reply(`📝 ${text}`);
+      case "meme": {
+        if (!botConfig.memeChannel)
+          return i.reply("⚠️ Meme channel not set. Use /setmeme first.");
+        await sendMeme(botConfig.memeChannel);
+        return i.reply("😂 Meme sent!");
       }
     }
-  } catch (err) {
-    console.error("Interaction error:", err);
-    if (interaction.replied || interaction.deferred) {
-      interaction.followUp("⚠️ Something went wrong.");
-    } else {
-      interaction.reply("⚠️ Something went wrong.");
-    }
+  } catch (e) {
+    console.error(e);
+    if (i.replied || i.deferred)
+      i.followUp("⚠️ Something went wrong.");
+    else
+      i.reply("⚠️ Something went wrong.");
   }
 });
 
