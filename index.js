@@ -93,58 +93,83 @@ const getPrompt = genre => {
    SLASH COMMANDS
 ========================= */
 const commands = [
-  new SlashCommandBuilder().setName("ping").setDescription("Check if the bot is alive"),
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Check if the bot is alive"),
+
   new SlashCommandBuilder()
     .setName("prompt")
     .setDescription("Get a writing prompt")
-    .addStringOption(o => o.setName("genre").setDescription("dark fantasy romance scifi")),
+    .addStringOption(o =>
+      o.setName("genre")
+       .setDescription("Choose a genre: dark, fantasy, romance, scifi")
+       .setRequired(false)
+    ),
+
   new SlashCommandBuilder()
     .setName("setmeme")
     .setDescription("Set the meme channel")
-    .addChannelOption(o => o.setName("channel").setDescription("Channel for memes").setRequired(true)),
-  new SlashCommandBuilder().setName("meme").setDescription("Send a meme now"),
+    .addChannelOption(o =>
+      o.setName("channel")
+       .setDescription("The channel where memes will be sent")
+       .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("meme")
+    .setDescription("Send a meme immediately"),
+
   new SlashCommandBuilder()
     .setName("proofread")
     .setDescription("Proofread text (grammar + clarity)")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .addStringOption(o => o.setName("text").setDescription("Text to proofread").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("grammar")
-    .setDescription("Fix grammar and spelling only")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .setDescription("Fix grammar and spelling")
+    .addStringOption(o => o.setName("text").setDescription("Text to fix").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("improve")
     .setDescription("Improve clarity and flow")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .addStringOption(o => o.setName("text").setDescription("Text to improve").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("rewrite")
     .setDescription("Rewrite text in a style")
-    .addStringOption(o => o.setName("style").setDescription("formal casual creative academic").setRequired(true))
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .addStringOption(o => o.setName("style").setDescription("Rewrite style e.g., formal, casual").setRequired(true))
+    .addStringOption(o => o.setName("text").setDescription("Text to rewrite").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("tone")
-    .setDescription("Change tone of text")
-    .addStringOption(o => o.setName("tone").setDescription("romantic dark friendly academic").setRequired(true))
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .setDescription("Change the tone of your text")
+    .addStringOption(o => o.setName("tone").setDescription("Tone e.g., friendly, dark, romantic").setRequired(true))
+    .addStringOption(o => o.setName("text").setDescription("Text to adjust tone").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("shorten")
-    .setDescription("Make text concise")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .setDescription("Make your text concise")
+    .addStringOption(o => o.setName("text").setDescription("Text to shorten").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("expand")
-    .setDescription("Expand ideas")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .setDescription("Expand your ideas")
+    .addStringOption(o => o.setName("text").setDescription("Text to expand").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("title")
-    .setDescription("Generate titles")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .setDescription("Generate titles for your text")
+    .addStringOption(o => o.setName("text").setDescription("Text to generate titles for").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("outline")
     .setDescription("Create a writing outline")
-    .addStringOption(o => o.setName("text").setRequired(true)),
+    .addStringOption(o => o.setName("text").setDescription("Text to outline").setRequired(true)),
+
   new SlashCommandBuilder()
     .setName("feedback")
     .setDescription("Get writing feedback")
-    .addStringOption(o => o.setName("text").setRequired(true))
+    .addStringOption(o => o.setName("text").setDescription("Text to review").setRequired(true))
 ].map(c => c.toJSON());
 
 /* =========================
@@ -166,7 +191,7 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 client.once("ready", () => {
   console.log(`🖤 Logged in as ${client.user.tag}`);
 
-  // Auto meme every 6 minutes with error handling
+  // Auto meme every 6 minutes
   setInterval(async () => {
     try {
       if (!botConfig.memeChannel) return;
