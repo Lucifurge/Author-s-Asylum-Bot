@@ -38,7 +38,6 @@ app.listen(process.env.PORT || 3000, () => console.log("🌐 Web server running"
 const configPath = path.join(__dirname, "config.json");
 const loadConfig = () => fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath)) : {};
 const saveConfig = data => fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
-
 let botConfig = loadConfig();
 
 /* =========================
@@ -50,9 +49,7 @@ async function sendMeme(channelId) {
   try {
     const res = await axiosSafe.get("https://meme-api.com/gimme");
     const channel = await client.channels.fetch(channelId);
-    if (channel && res.data?.url) {
-      await channel.send(res.data.url);
-    }
+    if (channel && res.data?.url) await channel.send(res.data.url);
   } catch (err) {
     console.error("Meme send error:", err.message);
   }
@@ -66,10 +63,7 @@ async function aiWrite(prompt) {
     const res = await axios.post(
       "https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct",
       { inputs: prompt },
-      {
-        headers: { Authorization: `Bearer ${process.env.HF_TOKEN}` },
-        timeout: 30000
-      }
+      { headers: { Authorization: `Bearer ${process.env.HF_TOKEN}` }, timeout: 30000 }
     );
     return res.data[0]?.generated_text || "⚠️ AI did not respond.";
   } catch (err) {
@@ -96,31 +90,23 @@ const getPrompt = genre => {
    SLASH COMMANDS
 ========================= */
 const commands = [
-  new SlashCommandBuilder()
-    .setName("ping")
-    .setDescription("Check if the bot is alive"),
+  new SlashCommandBuilder().setName("ping").setDescription("Check if the bot is alive"),
 
   new SlashCommandBuilder()
     .setName("prompt")
     .setDescription("Get a writing prompt")
     .addStringOption(o =>
-      o.setName("genre")
-       .setDescription("Choose a genre: dark, fantasy, romance, scifi")
-       .setRequired(false)
+      o.setName("genre").setDescription("dark, fantasy, romance, scifi").setRequired(false)
     ),
 
   new SlashCommandBuilder()
     .setName("setmeme")
     .setDescription("Set the meme channel")
     .addChannelOption(o =>
-      o.setName("channel")
-       .setDescription("The channel where memes will be sent")
-       .setRequired(true)
+      o.setName("channel").setDescription("The channel where memes will be sent").setRequired(true)
     ),
 
-  new SlashCommandBuilder()
-    .setName("meme")
-    .setDescription("Send a meme immediately"),
+  new SlashCommandBuilder().setName("meme").setDescription("Send a meme immediately"),
 
   new SlashCommandBuilder()
     .setName("proofread")
@@ -212,7 +198,7 @@ client.on("interactionCreate", async i => {
   if (!i.isChatInputCommand()) return;
 
   try {
-    await i.deferReply({ flags: 0 }); // public
+    await i.deferReply({ flags: 0 }); // public reply
 
     const text = i.options.getString("text") || "";
     const style = i.options.getString("style") || "creative";
