@@ -64,9 +64,12 @@ async function sendMeme(channelId) {
 async function aiWrite(prompt) {
   try {
     const res = await axios.post(
-      "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2",
+      "https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct",
       { inputs: prompt },
-      { headers: { Authorization: `Bearer ${process.env.HF_TOKEN}`, "Content-Type": "application/json" }, timeout: 30000 }
+      {
+        headers: { Authorization: `Bearer ${process.env.HF_TOKEN}` },
+        timeout: 30000
+      }
     );
     return res.data[0]?.generated_text || "⚠️ AI did not respond.";
   } catch (err) {
@@ -209,7 +212,7 @@ client.on("interactionCreate", async i => {
   if (!i.isChatInputCommand()) return;
 
   try {
-    await i.deferReply({ ephemeral: false });
+    await i.deferReply({ flags: 0 }); // public
 
     const text = i.options.getString("text") || "";
     const style = i.options.getString("style") || "creative";
@@ -217,51 +220,51 @@ client.on("interactionCreate", async i => {
 
     switch (i.commandName) {
       case "ping":
-        return i.editReply("🖋️ Author’s Asylum is awake.");
+        return i.editReply({ content: "🖋️ Author’s Asylum is awake", flags: 0 });
       case "prompt":
-        return i.editReply(`🩸 **Prompt:** ${getPrompt(i.options.getString("genre"))}`);
+        return i.editReply({ content: `🩸 **Prompt:** ${getPrompt(i.options.getString("genre"))}`, flags: 0 });
       case "setmeme": {
         const ch = i.options.getChannel("channel");
-        if (!ch) return i.editReply("⚠️ Channel not found.");
+        if (!ch) return i.editReply({ content: "⚠️ Channel not found.", flags: 0 });
         botConfig.memeChannel = ch.id;
         saveConfig(botConfig);
-        return i.editReply("✅ Meme channel set!");
+        return i.editReply({ content: "✅ Meme channel set!", flags: 0 });
       }
       case "meme": {
-        if (!botConfig.memeChannel) return i.editReply("⚠️ Meme channel not set. Use /setmeme first.");
+        if (!botConfig.memeChannel) return i.editReply({ content: "⚠️ Meme channel not set. Use /setmeme first.", flags: 0 });
         try {
           await sendMeme(botConfig.memeChannel);
-          return i.editReply("😂 Meme sent!");
+          return i.editReply({ content: "😂 Meme sent!", flags: 0 });
         } catch {
-          return i.editReply("⚠️ Failed to send meme.");
+          return i.editReply({ content: "⚠️ Failed to send meme.", flags: 0 });
         }
       }
       case "proofread":
-        return i.editReply(await aiWrite(`Proofread this text:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Proofread this text:\n${text}`), flags: 0 });
       case "grammar":
-        return i.editReply(await aiWrite(`Fix grammar and spelling only:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Fix grammar and spelling only:\n${text}`), flags: 0 });
       case "improve":
-        return i.editReply(await aiWrite(`Improve clarity and flow:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Improve clarity and flow:\n${text}`), flags: 0 });
       case "rewrite":
-        return i.editReply(await aiWrite(`Rewrite in ${style} style:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Rewrite in ${style} style:\n${text}`), flags: 0 });
       case "tone":
-        return i.editReply(await aiWrite(`Change tone to ${tone}:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Change tone to ${tone}:\n${text}`), flags: 0 });
       case "shorten":
-        return i.editReply(await aiWrite(`Make this concise:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Make this concise:\n${text}`), flags: 0 });
       case "expand":
-        return i.editReply(await aiWrite(`Expand this idea:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Expand this idea:\n${text}`), flags: 0 });
       case "title":
-        return i.editReply(await aiWrite(`Generate 5 titles for:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Generate 5 titles for:\n${text}`), flags: 0 });
       case "outline":
-        return i.editReply(await aiWrite(`Create an outline for:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Create an outline for:\n${text}`), flags: 0 });
       case "feedback":
-        return i.editReply(await aiWrite(`Give writing feedback:\n${text}`));
+        return i.editReply({ content: await aiWrite(`Give writing feedback:\n${text}`), flags: 0 });
       default:
-        return i.editReply("⚠️ Unknown command.");
+        return i.editReply({ content: "⚠️ Unknown command.", flags: 0 });
     }
   } catch (err) {
     console.error("Interaction error:", err);
-    if (i.deferred) i.editReply("⚠️ Something went wrong. Try again later.");
+    if (i.deferred) i.editReply({ content: "⚠️ Something went wrong. Try again later.", flags: 0 });
   }
 });
 
